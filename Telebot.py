@@ -6,19 +6,15 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-
 import subprocess
 import os
-import asyncio
 
 TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_USER = int(os.getenv("USER_ID"))
 
 USER_LINK = {}
-DOWNLOAD_LOCK = asyncio.Lock()
 
-
-# ===== Получаем ссылку =====
+# Получаем ссылку
 async def receive_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ALLOWED_USER:
         return
@@ -27,8 +23,8 @@ async def receive_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [
-            InlineKeyboardButton("📹 Видео", callback_data="video"),
-            InlineKeyboardButton("🎵 Музыка", callback_data="audio"),
+            InlineKeyboardButton("📹 Видео", callback_data="video_menu"),
+            InlineKeyboardButton("🎵 Музыка", callback_data="audio_menu"),
         ]
     ]
 
@@ -38,7 +34,7 @@ async def receive_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ===== Главное меню =====
+# Обработка кнопок
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -49,8 +45,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = USER_LINK.get(user_id)
 
-    # VIDEO MENU
-    if query.data == "video":
+    # ===== VIDEO MENU =====
+    if query.data == "video_menu":
         keyboard = [
             [
                 InlineKeyboardButton("1080p", callback_data="v1080"),
@@ -58,15 +54,14 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("480p", callback_data="v480"),
             ]
         ]
-
         await query.edit_message_text(
-            "📹 Выбери качество видео:",
+            "Выбери качество видео:",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
 
-    # AUDIO MENU
-    if query.data == "audio":
+    # ===== AUDIO MENU =====
+    if query.data == "audio_menu":
         keyboard = [
             [
                 InlineKeyboardButton("320kbps", callback_data="a320"),
@@ -74,63 +69,54 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("128kbps", callback_data="a128"),
             ]
         ]
-
         await query.edit_message_text(
-            "🎵 Выбери качество музыки:",
+            "Выбери качество музыки:",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
 
-    await query.edit_message_text("⏳ Добавлено в очередь...")
+    await query.edit_message_text("⬇️ Скачиваю...")
 
-    async with DOWNLOAD_LOCK:
+    # ===== VIDEO DOWNLOAD =====
+    if query.data.startswith("v"):
+        quality = query.data.replace("v", "")
 
-        msg = await query.message.reply_text("⬇️ Скачиваю...")
+        subprocess.run([
+            "yt-dlp",
+            "-f",
+            f"bestvideo[height<={quality}]+bestaudio/best",
+            "-o",
+            "video.%(ext)s",
+            url,
+        ])
 
-        # ===== VIDEO =====
-        if query.data.startswith("v"):
-            quality = query.data.replace("v", "")
+        for file in os.listdir():
+            if file.startswith("video"):
+                await query.message.reply_video(open(file, "rb"))
+                os.remove(file)
 
-            subprocess.run([
-                "yt-dlp",
-                "-f",
-                f"bestvideo[height<={quality}]+bestaudio/best",
-                "--merge-output-format",
-                "mp4",
-                "-o",
-                "video.%(ext)s",
-                url,
-            ])
+    # ===== AUDIO DOWNLOAD =====
+    if query.data.startswith("a"):
+        bitrate = query.data.replace("a", "")
 
-            for file in os.listdir():
-                if file.startswith("video"):
-                    await msg.edit_text("📤 Отправляю видео...")
-                    await query.message.reply_video(open(file, "rb"))
-                    os.remove(file)
+        subprocess.run([
+            "yt-dlp",
+            "-x",
+            "--audio-format",
+            "mp3",
+            "--audio-quality",
+            bitrate,
+            "-o",
+            "audio.%(ext)s",
+            url,
+        ])
 
-        # ===== AUDIO =====
-        if query.data.startswith("a"):
-            bitrate = query.data.replace("a", "")
+        for file in os.listdir():
+            if file.startswith("audio"):
+                await query.message.reply_audio(open(file, "rb"))
+                os.remove(file)
 
-            subprocess.run([
-                "yt-dlp",
-                "-x",
-                "--audio-format",
-                "mp3",
-                "--audio-quality",
-                bitrate,
-                "-o",
-                "audio.%(ext)s",
-                url,
-            ])
-
-            for file in os.listdir():
-                if file.startswith("audio"):
-                    await msg.edit_text("📤 Отправляю музыку...")
-                    await query.message.reply_audio(open(file, "rb"))
-                    os.remove(file)
-
-        await msg.edit_text("✅ Готово!")
+    await query.message.reply_text("✅ Готово!")
 
 
 app = ApplicationBuilder().token(TOKEN).build()
