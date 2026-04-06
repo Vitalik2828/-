@@ -1,87 +1,92 @@
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters,
+)
+
+import subprocess
 import os
-import asyncio
-import logging
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from yt_dlp import YoutubeDL
 
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
+USER_LINK = {}
 
-logging.basicConfig(level=logging.INFO)
 
-DOWNLOAD_PATH = "downloads"
-if not os.path.exists(DOWNLOAD_PATH):
-    os.makedirs(DOWNLOAD_PATH)
+# ===== Получаем ссылку =====
+async def receive_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
 
-@dp.message(lambda message: message.from_user.id != ADMIN_ID)
-async def access_denied(message: types.Message):
-    return
+    USER_LINK[update.effective_user.id] = update.message.text
 
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    await message.answer("🤖 Доступ разрешен. Пришли ссылку.")
+    keyboard = [
+        [
+            InlineKeyboardButton("📹 Видео", callback_data="video"),
+            InlineKeyboardButton("🎵 Музыка", callback_data="audio"),
+        ]
+    ]
 
-@dp.message(F.text.contains("http"))
-async def handle_link(message: types.Message):
-    url = message.text
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        types.InlineKeyboardButton(text="🎬 720p", callback_data=f"v_720|{url}"),
-        types.InlineKeyboardButton(text="🎬 Best", callback_data=f"v_best|{url}"),
-        types.InlineKeyboardButton(text="🎵 MP3", callback_data=f"audio|{url}")
+    await update.message.reply_text(
+        "Что скачать?",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
-    await message.answer("Качество:", reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data.startswith("v_") | F.data.startswith("audio"))
-async def process_download(callback: types.CallbackQuery):
-    action, url = callback.data.split("|")
-    await callback.message.edit_text("⏳ Загрузка...")
 
-    ydl_opts = {
-        'outtmpl': f'{DOWNLOAD_PATH}/%(id)s.%(ext)s',
-        'noplaylist': True,
-    }
+# ===== Кнопки =====
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    if action == "audio":
-        ydl_opts.update({
-            'format': 'bestaudio/best',
-            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-        })
-    else:
-        res = "720" if "720" in action else "1080"
-        ydl_opts.update({
-            'format': f'bestvideo[height<={res}]+bestaudio/best/best[height<={res}]',
-            'merge_output_format': 'mp4',
-        })
+    if query.from_user.id != ADMIN_ID:
+        return
 
-    try:
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            path = ydl.prepare_filename(info)
-            if action == "audio":
-                path = os.path.splitext(path)[0] + ".mp3"
+    url = USER_LINK.get(query.from_user.id)
 
-        file_to_send = types.FSInputFile(path)
-        
-        if action == "audio":
-            await callback.message.answer_audio(file_to_send)
-        else:
-            await callback.message.answer_video(file_to_send)
-            
-        os.remove(path)
-        await callback.message.delete()
+    await query.edit_message_text("⬇️ Скачиваю...")
 
-    except Exception as e:
-        logging.error(e)
-        await callback.message.answer("❌ Ошибка")
+    # ===== VIDEO =====
+    if query.data == "video":
+        subprocess.run([
+            "yt-dlp",
+            "--merge-output-format",
+            "mp4",
+            "-o",
+            "video.%(ext)s",
+            url
+        ])
 
-async def main():
-    await dp.start_polling(bot)
+        for file in os.listdir():
+            if file.startswith("video"):
+                await query.message.reply_video(open(file, "rb"))
+                os.remove(file)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    # ===== AUDIO =====
+    if query.data == "audio":
+        subprocess.run([
+            "yt-dlp",
+            "-x",
+            "--audio-format",
+            "mp3",
+            "-o",
+            "audio.%(ext)s",
+            url
+        ])
+
+        for file in os.listdir():
+            if file.startswith("audio"):
+                await query.message.reply_audio(open(file, "rb"))
+                os.remove(file)
+
+    await query.message.reply_text("✅ Готово!")
+
+
+app = ApplicationBuilder().token(TOKEN).build()
+
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_link))
+app.add_handler(CallbackQueryHandler(buttons))
+
+app.run_polling()
