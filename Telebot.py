@@ -9,10 +9,9 @@ from telegram.ext import (
 import subprocess
 import os
 
-TOKEN = os.getenv(8659954382:AAFNXZxsc__jerB0C3LwuA4OhFZLDeATLPQ)
-ALLOWED_USER = int(os.getenv("1980197284"))
+TOKEN = os.getenv("BOT_TOKEN")
+ALLOWED_USER = int(os.getenv("USER_ID"))
 
-# сохраняем ссылку
 USER_LINK = {}
 
 async def receive_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -40,7 +39,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     user_id = query.from_user.id
-
     if user_id != ALLOWED_USER:
         return
 
@@ -52,12 +50,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         subprocess.run(["yt-dlp", url])
 
     elif query.data == "mp3":
-        subprocess.run(
-            ["yt-dlp", "-x", "--audio-format", "mp3", url]
-        )
+        subprocess.run(["yt-dlp", "-x", "--audio-format", "mp3", url])
 
     await query.message.reply_text("✅ Готово!")
-
 
 app = ApplicationBuilder().token(TOKEN).build()
 
